@@ -7,6 +7,9 @@
     <servlet-name>Faces Servlet</servlet-name>
     <servlet-class>jakarta.faces.webapp.FacesServlet</servlet-class>
   </servlet>
+  <listener>
+    <listener-class>com.unicorn.store.data.CheckpointUtil</listener-class>
+  </listener>
   <servlet-mapping>
     <servlet-name>Faces Servlet</servlet-name>
     <url-pattern>*.xhtml</url-pattern>

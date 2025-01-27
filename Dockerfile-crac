@@ -1,0 +1,42 @@
+FROM azul/zulu-openjdk:21-jdk-crac-latest AS builder
+RUN apt-get -qq update && apt-get -qq install -y curl maven
+ARG QUARKUS_DATASOURCE_JDBC_URL
+ENV QUARKUS_DATASOURCE_JDBC_URL=$QUARKUS_DATASOURCE_JDBC_URL
+ARG QUARKUS_DATASOURCE_USERNAME
+ENV QUARKUS_DATASOURCE_USERNAME=$QUARKUS_DATASOURCE_USERNAME
+ARG QUARKUS_DATASOURCE_PASSWORD
+ENV QUARKUS_DATASOURCE_PASSWORD=$QUARKUS_DATASOURCE_PASSWORD
+
+# Build the application
+COPY ./pom.xml ./pom.xml
+COPY src ./src/
+RUN mvn clean package -ntp && mv target/quarkus-app/ /opt/quarkus-app
+
+# Run the application and take a checkpoint
+ENV ENDPOINT=http://localhost:8080/api/hello
+RUN <<END_OF_SCRIPT
+#!/bin/bash
+java -Djdk.crac.collect-fd-stacktraces=true -XX:CRaCEngine=warp \
+     -XX:CRaCCheckpointTo=/opt/crac-files -jar /opt/quarkus-app/quarkus-run.jar &
+PID=$!
+# Wait until the connection is opened
+until curl --output /dev/null --silent --head --fail $ENDPOINT; do echo "..." &&  sleep 1; done
+# Trigger the checkpoint
+jcmd /opt/quarkus-app/quarkus-run.jar JDK.checkpoint
+wait $PID || true
+END_OF_SCRIPT
+
+FROM azul/zulu-openjdk:21-jdk-crac-latest AS runtime
+RUN apt-get -qq update && apt-get -qq install -y adduser
+RUN addgroup --system --gid 1000 spring
+RUN adduser --uid 1000 --gid 1000 spring
+
+# Copy the application file and the checkpoint file to the final image
+COPY --from=builder --chown=1000:1000 /opt/crac-files /opt/crac-files
+COPY --from=builder --chown=1000:1000 /opt/quarkus-app/ /opt/quarkus-app
+
+USER 1000:1000
+EXPOSE 8080
+
+# Restore the application from the checkpoint
+CMD ["java", "-XX:CRaCEngine=warp", "-XX:CRaCRestoreFrom=/opt/crac-files"]
